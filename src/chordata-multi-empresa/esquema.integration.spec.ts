@@ -188,4 +188,23 @@ d('Flow multi-empresa: esquema e RLS (Postgres real)', () => {
     const pol = await ds.query(`SELECT 1 FROM pg_policies WHERE tablename = 'campaigns'`);
     expect(pol).toHaveLength(1);
   }, 60_000);
+
+  it('remover devolve os índices únicos originais e instalar de novo volta ao isolamento', async () => {
+    const unicoPorNome = () =>
+      ds.query(
+        `SELECT indexdef FROM pg_indexes WHERE tablename = 'campaigns' AND indexdef LIKE 'CREATE UNIQUE%' AND indexdef LIKE '%(name)%'`,
+      );
+    await removerEsquema(ds);
+    const colunas = await ds.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name = 'campaigns' AND column_name = 'empresa_id'`,
+    );
+    expect(colunas).toHaveLength(0);
+    expect(await unicoPorNome()).toHaveLength(1); // a unicidade original voltou
+
+    await instalarEsquema(ds, PADRAO);
+    const composto = await ds.query(
+      `SELECT indexdef FROM pg_indexes WHERE tablename = 'campaigns' AND indexdef LIKE '%(empresa_id, name)%'`,
+    );
+    expect(composto).toHaveLength(1);
+  }, 120_000);
 });

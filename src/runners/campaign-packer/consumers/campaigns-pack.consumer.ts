@@ -1,4 +1,5 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { EmpresaDeFundoService } from '../../../chordata-multi-empresa/empresa-de-fundo.service';
 import {
   IMESSAGE_BROKER,
   IMessageBroker,
@@ -33,7 +34,14 @@ export class CampaignsPackConsumer implements OnModuleInit {
     private readonly packer: CampaignPackerService,
     private readonly correlation: CorrelationContext,
     private readonly logger: CustomLoggerService,
+      @Optional() private readonly fundo?: EmpresaDeFundoService,
   ) {}
+
+  /** Multi-empresa: roda o trabalho na empresa da campanha (sem multi-empresa só executa).
+   *  Ligado, um erro (ex.: campanha inexistente) segue a política normal de ack/nack. */
+  private executarNaEmpresa<T>(campaignId: string, trabalho: () => Promise<T>): Promise<T> {
+    return this.fundo ? this.fundo.executarParaCampanha(campaignId, trabalho) : trabalho();
+  }
 
   async onModuleInit(): Promise<void> {
     await this.broker.subscribe<CampaignsPackContract>(
@@ -67,7 +75,9 @@ export class CampaignsPackConsumer implements OnModuleInit {
           meta: { campaignId: payload.campaignId },
         },
         async () => {
-          await this.packer.pack(payload);
+          await this.executarNaEmpresa(payload.campaignId, () =>
+            this.packer.pack(payload),
+          );
         },
       ),
     );

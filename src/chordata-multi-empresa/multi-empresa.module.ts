@@ -1,9 +1,10 @@
-import { Module, OnModuleInit } from '@nestjs/common';
+import { Global, Module, OnModuleInit } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ClsServiceManager } from 'nestjs-cls';
 import { EvoExtensionPoints } from '../evo-extension-points';
 import { CrmClientModule } from '../shared/crm-client/crm-client.module';
 import { EmpresaAcessoService } from './empresa-acesso.service';
+import { EmpresaDeFundoService } from './empresa-de-fundo.service';
 import { EMPRESA_CLS_KEY, multiEmpresaLigado } from './multi-empresa.constants';
 import { MultiEmpresaInterceptor } from './multi-empresa.interceptor';
 import { multiEmpresaRunner } from './multi-empresa.runner';
@@ -23,14 +24,19 @@ export function empresaAtualDoCls(): string | undefined {
  * nada e o Flow se comporta como o Evo comunitário. Ligado: troca o ponto de extensão `tenant_db_context`
  * pelo runner com RLS, separa os caches por empresa e envolve cada requisição HTTP na empresa dela.
  */
+@Global()
 @Module({
   imports: [CrmClientModule],
-  providers: multiEmpresaLigado()
-    ? [
-        EmpresaAcessoService,
-        { provide: APP_INTERCEPTOR, useClass: MultiEmpresaInterceptor },
-      ]
-    : [],
+  providers: [
+    EmpresaDeFundoService,
+    ...(multiEmpresaLigado()
+      ? [
+          EmpresaAcessoService,
+          { provide: APP_INTERCEPTOR, useClass: MultiEmpresaInterceptor },
+        ]
+      : []),
+  ],
+  exports: [EmpresaDeFundoService],
 })
 export class MultiEmpresaModule implements OnModuleInit {
   onModuleInit(): void {

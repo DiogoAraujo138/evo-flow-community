@@ -49,6 +49,8 @@ export const UNICOS_POR_EMPRESA: Record<string, string[]> = {
 export const CHAVES_DE_RESOLUCAO: ReadonlyArray<[string, string]> = [
   ['short_links', 'short_code'],
   ['custom_domains', 'domain'],
+  // consumidores de fila recebem só o id da campanha e precisam achar a empresa dela
+  ['campaigns', 'id'],
 ];
 
 export const PAPEL_RESOLVEDOR = 'chordata_resolvedor';
@@ -89,6 +91,7 @@ export async function removerEsquema(dataSource: DataSource): Promise<void> {
       'DROP FUNCTION IF EXISTS chordata_resolver_empresa(text, text, text)',
     );
     await runner.query('DROP TABLE IF EXISTS chordata_chaves_resolucao');
+    await restaurarUnicos(runner);
     for (const tabela of TABELAS_DE_EMPRESA) {
       const t = ident(tabela);
       await runner.query(`DROP POLICY IF EXISTS isolamento_por_empresa ON ${t}`);
@@ -103,6 +106,23 @@ export async function removerEsquema(dataSource: DataSource): Promise<void> {
     throw erro;
   } finally {
     await runner.release();
+  }
+}
+
+/** Devolve os índices únicos originais (tira empresa_id dos índices `*_empresa`) antes de apagar a coluna. */
+async function restaurarUnicos(runner: QueryRunner): Promise<void> {
+  const indices: Array<{ nome: string; definicao: string }> = await runner.query(`
+    SELECT i.relname AS nome, pg_get_indexdef(ix.indexrelid) AS definicao
+    FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid
+    WHERE ix.indisunique AND i.relname LIKE '%\_empresa'
+  `);
+  for (const { nome, definicao } of indices) {
+    const original = nome.replace(/_empresa$/, '');
+    const novo = definicao
+      .replace('USING btree (empresa_id, ', 'USING btree (')
+      .replace(/INDEX \S+ ON/, `INDEX ${ident(original)} ON`);
+    await runner.query(`DROP INDEX IF EXISTS ${ident(nome)}`);
+    await runner.query(novo);
   }
 }
 
