@@ -1,9 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { In, Repository } from 'typeorm';
-import { Tag } from '../../modules/labels/entities/tag.entity';
+import { Repository } from 'typeorm';
 import { Campaign } from '../../modules/campaigns/entities/campaign.entity';
 import { Segment } from '../../modules/segments/entities/segment.entity';
-import { Tagging, TaggableType } from '../../modules/labels/entities/tagging.entity';
 import { TenantDbContext } from '../../evo-extension-points';
 import { ContactsClientService } from '../crm-client/contacts-client.service';
 import type { HydratedContact } from '../crm-client/types/contact';
@@ -53,14 +51,6 @@ export class SegmentQueryBuilderService {
 
   private get segmentRepository(): Repository<Segment> {
     return this.db.getRepository(Segment);
-  }
-
-  private get tagRepository(): Repository<Tag> {
-    return this.db.getRepository(Tag);
-  }
-
-  private get taggingRepository(): Repository<Tagging> {
-    return this.db.getRepository(Tagging);
   }
 
   /**
@@ -134,8 +124,8 @@ export class SegmentQueryBuilderService {
     // The wizard asked for a subset (tags) that none of the strategies above could resolve.
     // Sending to everyone here is irreversible and wrong, so refuse instead of defaulting.
     if (wizard.contactSelection === 'tags') {
-      // The wizard stores label ids, but the taggings lookup works on names. `tags` is the
-      // acts_as_taggable_on table the CRM labels live in, so ids resolve to names here.
+      // The wizard stores CRM label ids, but contacts are filtered by label title. Labels live
+      // in the CRM (the Flow has its own database), so the ids are resolved over HTTP.
       const includeTagIds = wizard.tagIds.filter((id) => !id.startsWith('!'));
       if (wizard.tagIds.length > includeTagIds.length) {
         throw new AudienceConfigError(
@@ -144,13 +134,13 @@ export class SegmentQueryBuilderService {
       }
       if (includeTagIds.length > 0) {
         const wanted = [...new Set(includeTagIds)];
-        const found = await this.tagRepository.find({ where: { id: In(wanted) } });
-        if (found.length !== wanted.length) {
+        const titles = await Promise.all(wanted.map((id) => this.contactsClient.getLabelTitle(id)));
+        if (titles.some((title) => !title)) {
           throw new AudienceConfigError(
-            `Campaign ${campaign.id} targets tags that no longer exist; refusing to send to a partial or full audience.`,
+            `Campaign ${campaign.id} targets labels that no longer exist; refusing to send to a different audience.`,
           );
         }
-        return { type: 'tags', tags: found.map((tag) => tag.name) };
+        return { type: 'tags', tags: titles as string[] };
       }
       throw new AudienceConfigError(
         `Campaign ${campaign.id} targets tags but none could be resolved; refusing to fall back to all contacts.`,
@@ -292,26 +282,17 @@ export class SegmentQueryBuilderService {
   }
 
   /**
-   * Get contacts by tags/labels using the local taggings table. The
-   * `taggings` table is owned by evo-flow (labels module), not CRM, so this
-   * query stays local. Only Contact-type taggings are returned. Blocked-flag
-   * filtering is deferred to the hydration step (consumers).
+   * Get contacts by label titles. Labels are owned by the CRM, so the lookup goes through its
+   * contacts list (`labels[]` filter, any-of). The Flow's own `taggings` table is never
+   * populated. Blocked-flag filtering is deferred to the hydration step (consumers).
    */
   private async getContactsByTags(
     tags: string[],
     limit?: number,
     offset: number = 0,
   ): Promise<AudienceQueryResult> {
-    const baseQb = this.taggingRepository
-      .createQueryBuilder('tagging')
-      .innerJoin('tagging.tag', 'tag')
-      .where('tagging.taggableType = :type', { type: TaggableType.CONTACT })
-      .andWhere('tag.name IN (:...tags)', { tags })
-      .select('DISTINCT tagging.taggableId', 'id');
-
-    // getRawMany() doesn't honour skip/take cleanly with DISTINCT, so do it in JS.
-    const rows = await baseQb.getRawMany();
-    const allIds = rows.map((r) => r.id);
+    const rows = await this.contactsClient.listAllIds({ labels: tags });
+    const allIds = [...new Set(rows.map((row) => row.id))];
     const total = allIds.length;
 
     const paginated =

@@ -83,15 +83,23 @@ export class ContactsClientService {
    * a page returns fewer than pageSize records OR an empty page.
    */
   async listAllIds(
-    opts?: RequestOptions & { pageSize?: number; maxPages?: number },
+    opts?: RequestOptions & {
+      pageSize?: number;
+      maxPages?: number;
+      /** Only contacts carrying ANY of these label titles (CRM `labels[]` filter). */
+      labels?: string[];
+    },
   ): Promise<Array<{ id: string; blocked: boolean }>> {
     const pageSize = opts?.pageSize ?? 500;
     const maxPages = opts?.maxPages ?? 1000; // safety bound: 500k contacts
     const out: Array<{ id: string; blocked: boolean }> = [];
+    const labelFilter = (opts?.labels ?? [])
+      .map((label) => `&labels[]=${encodeURIComponent(label)}`)
+      .join('');
 
     for (let page = 1; page <= maxPages; page++) {
       const payload = await this.crm.get<any>(
-        `/api/v1/contacts?page=${page}&pageSize=${pageSize}`,
+        `/api/v1/contacts?page=${page}&pageSize=${pageSize}${labelFilter}`,
         opts,
       );
 
@@ -118,6 +126,20 @@ export class ContactsClientService {
     }
 
     return out;
+  }
+
+  /**
+   * Resolve a CRM label id to its title via `GET /api/v1/labels/{id}`.
+   * Returns null when the label does not exist (404) or has no title.
+   */
+  async getLabelTitle(id: string, opts?: RequestOptions): Promise<string | null> {
+    const data = await this.crm.get<LabelDto | { data: LabelDto }>(
+      `/api/v1/labels/${encodeURIComponent(id)}`,
+      opts,
+    );
+    if (data === null) return null;
+    const label = ((data as any)?.data ?? data) as LabelDto;
+    return label?.title ?? null;
   }
 
   async addLabel(

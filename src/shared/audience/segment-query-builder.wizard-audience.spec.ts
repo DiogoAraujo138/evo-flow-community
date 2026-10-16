@@ -1,6 +1,5 @@
 import { SegmentQueryBuilderService } from './segment-query-builder.service';
 import { Segment } from '../../modules/segments/entities/segment.entity';
-import { Tag } from '../../modules/labels/entities/tag.entity';
 import { TenantDbContext } from '../../evo-extension-points';
 import { AudienceConfigError } from './errors/audience.errors';
 
@@ -10,19 +9,16 @@ import { AudienceConfigError } from './errors/audience.errors';
 describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', () => {
   const segmentRepository: any = {};
   const taggingRepository: any = {};
-  const tagRepository: any = { find: jest.fn() };
   const db = {
-    getRepository: (entity: unknown) => {
-      if (entity === Segment) return segmentRepository;
-      if (entity === Tag) return tagRepository;
-      return taggingRepository;
-    },
+    getRepository: (entity: unknown) =>
+      entity === Segment ? segmentRepository : taggingRepository,
   } as unknown as TenantDbContext;
+  const contactsClient = { getLabelTitle: jest.fn(), listAllIds: jest.fn() };
   // Segment membership lives in ClickHouse, behind SegmentComputationService.
   const segmentComputation = { getContactIdsInSegments: jest.fn() };
   const service = new SegmentQueryBuilderService(
     db,
-    {} as any,
+    contactsClient as any,
     segmentComputation as any,
   );
 
@@ -40,7 +36,8 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
 
   beforeEach(() => {
     segmentComputation.getContactIdsInSegments.mockReset();
-    tagRepository.find.mockReset().mockResolvedValue([]);
+    contactsClient.getLabelTitle.mockReset().mockResolvedValue(null);
+    contactsClient.listAllIds.mockReset();
   });
 
   describe('analyzeSegmentationStrategy', () => {
@@ -109,10 +106,8 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
     });
 
     it('resolves the label ids chosen in the wizard to tag names', async () => {
-      tagRepository.find.mockResolvedValue([
-        { id: 'tag-1', name: 'vip' },
-        { id: 'tag-2', name: 'lead-quente' },
-      ]);
+      const titles: Record<string, string> = { 'tag-1': 'vip', 'tag-2': 'lead-quente' };
+      contactsClient.getLabelTitle.mockImplementation(async (id: string) => titles[id] ?? null);
 
       const result = await service.analyzeSegmentationStrategy(
         campaign({ steps: wizardSteps({ contact_selection: 'tags', tag_ids: ['tag-1', 'tag-2', 'tag-1'] }) }),
@@ -122,7 +117,7 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
     });
 
     it('refuses when a chosen label no longer exists instead of narrowing silently', async () => {
-      tagRepository.find.mockResolvedValue([{ id: 'tag-1', name: 'vip' }]);
+      contactsClient.getLabelTitle.mockImplementation(async (id: string) => (id === 'tag-1' ? 'vip' : null));
 
       await expect(
         service.analyzeSegmentationStrategy(
@@ -137,7 +132,7 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
           campaign({ steps: wizardSteps({ contact_selection: 'tags', tag_ids: ['tag-1', '!tag-2'] }) }),
         ),
       ).rejects.toBeInstanceOf(AudienceConfigError);
-      expect(tagRepository.find).not.toHaveBeenCalled();
+      expect(contactsClient.getLabelTitle).not.toHaveBeenCalled();
     });
 
     it('still resolves a tags audience when the campaign carries the tag names', async () => {
@@ -174,6 +169,22 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
       );
 
       expect(result).toMatchObject({ type: 'segments', includeSegmentIds: ['seg-a'] });
+    });
+  });
+
+  describe('executeAudienceQuery with tags', () => {
+    it('asks the CRM for the contacts carrying the labels, without duplicates', async () => {
+      contactsClient.listAllIds.mockResolvedValue([
+        { id: 'c1', blocked: false },
+        { id: 'c2', blocked: false },
+        { id: 'c1', blocked: false },
+      ]);
+
+      const result = await service.executeAudienceQuery(campaign(), { type: 'tags', tags: ['vip'] });
+
+      expect(contactsClient.listAllIds).toHaveBeenCalledWith({ labels: ['vip'] });
+      expect(result.contactIds).toEqual(['c1', 'c2']);
+      expect(result.total).toBe(2);
     });
   });
 
