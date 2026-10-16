@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { opcoesTemporalDoWorker } from '../../chordata-multi-empresa/temporal';
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { journeyExecutionActivities } from './activities/journey-execution.activities';
 import { actionNodeActivities } from './activities/action-nodes.activities';
@@ -280,7 +281,8 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
           // Journey tracking activities
           ...journeyTrackingActivities,
         },
-        reuseV8Context: true, // Enable V8 context reuse for performance
+        ...opcoesTemporalDoWorker(require.resolve('./workflows/empresa-interceptors')),
+        reuseV8Context: true,
         maxConcurrentActivityTaskExecutions: 200, // Increase concurrency
         maxConcurrentWorkflowTaskExecutions: 200, // Increase concurrency
         // Add performance optimizations

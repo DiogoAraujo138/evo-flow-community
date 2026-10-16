@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { interceptadoresDoClienteTemporal } from '../../../chordata-multi-empresa/temporal';
 import { Connection, Client } from '@temporalio/client';
 import { ConfigService } from '@nestjs/config';
 
@@ -56,6 +57,7 @@ export class CampaignWorkflowService {
       this.client = new Client({
         connection: this.connection,
         namespace: 'default',
+        interceptors: interceptadoresDoClienteTemporal(),
       });
 
       this.logger.log('Successfully connected to Temporal');

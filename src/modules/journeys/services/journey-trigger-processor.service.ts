@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { interceptadoresDoClienteTemporal } from '../../../chordata-multi-empresa/temporal';
 import { Consumer, Kafka, EachMessagePayload } from 'kafkajs';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -720,6 +721,7 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
       this.temporalClient = new Client({
         connection,
         namespace: process.env.TEMPORAL_NAMESPACE || 'default',
+        interceptors: interceptadoresDoClienteTemporal(),
       });
     }
 

@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { opcoesTemporalDoWorker } from '../../chordata-multi-empresa/temporal';
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { campaignExecutionActivities } from './activities/campaign-execution.activities';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
@@ -73,6 +74,7 @@ export class CampaignWorkerService implements OnModuleInit, OnModuleDestroy {
         activities: {
           ...campaignExecutionActivities,
         },
+        ...opcoesTemporalDoWorker(require.resolve('./workflows/empresa-interceptors')),
         reuseV8Context: true,
         maxConcurrentActivityTaskExecutions: 100,
         maxConcurrentWorkflowTaskExecutions: 100,

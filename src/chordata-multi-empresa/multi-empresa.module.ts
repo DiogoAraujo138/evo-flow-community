@@ -5,6 +5,7 @@ import { ClsServiceManager } from 'nestjs-cls';
 import { EvoExtensionPoints } from '../evo-extension-points';
 import { ClickHouseEmpresa } from './clickhouse-empresa';
 import { ExecucaoPorEmpresa } from './por-empresa';
+import { usarTransacaoDaEmpresaNosRepositorios } from './temporal';
 import { CrmClientModule } from '../shared/crm-client/crm-client.module';
 import { EmpresaAcessoService } from './empresa-acesso.service';
 import { EmpresaDeFundoService } from './empresa-de-fundo.service';
@@ -52,6 +53,7 @@ export class MultiEmpresaModule implements OnModuleInit, OnApplicationBootstrap 
   /** Depois de todos os onModuleInit (o ClickHouseService já se registrou): prepara o banco de cada empresa ativa. */
   async onApplicationBootstrap(): Promise<void> {
     if (!multiEmpresaLigado()) return;
+    usarTransacaoDaEmpresaNosRepositorios();
     ClickHouseEmpresa.definirBuscaDeSlug(async id => {
       const linhas: Array<{ slug: string }> = await this.dataSource.query(
         'SELECT slug FROM empresas WHERE id = $1 AND ativa',

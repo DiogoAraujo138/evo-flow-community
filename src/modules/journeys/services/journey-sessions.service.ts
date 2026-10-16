@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { interceptadoresDoClienteTemporal } from '../../../chordata-multi-empresa/temporal';
 import { JourneySessionStatus } from '../entities/journey-session.entity';
 import { CustomLoggerService } from '../../../common/services/custom-logger.service';
 import { JourneySessionCacheService, CachedJourneySession } from '../../cache/services/journey-session-cache.service';
@@ -60,6 +61,7 @@ export class JourneySessionsService {
       this.temporalClient = new Client({
         connection,
         namespace: process.env.TEMPORAL_NAMESPACE || 'default',
+        interceptors: interceptadoresDoClienteTemporal(),
       });
     }
 

@@ -1,4 +1,5 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
+import { interceptadoresDoClienteTemporal } from '../../../../chordata-multi-empresa/temporal';
 import { getAppContext } from '../../../../shared/app-context.holder';
 import { TEMPORAL_TASK_QUEUES } from '../../temporal-task-queues.constants';
 
@@ -77,6 +78,7 @@ export class TransferJourneyNode extends BaseNode {
         const client = new Client({
           connection,
           namespace: process.env.TEMPORAL_NAMESPACE || 'default',
+          interceptors: interceptadoresDoClienteTemporal(),
         });
 
         // Generate unique workflow ID for the new journey
