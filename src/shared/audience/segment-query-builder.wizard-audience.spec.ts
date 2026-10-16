@@ -1,5 +1,6 @@
 import { SegmentQueryBuilderService } from './segment-query-builder.service';
 import { Segment } from '../../modules/segments/entities/segment.entity';
+import { Tag } from '../../modules/labels/entities/tag.entity';
 import { TenantDbContext } from '../../evo-extension-points';
 import { AudienceConfigError } from './errors/audience.errors';
 
@@ -9,9 +10,13 @@ import { AudienceConfigError } from './errors/audience.errors';
 describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', () => {
   const segmentRepository: any = {};
   const taggingRepository: any = {};
+  const tagRepository: any = { find: jest.fn() };
   const db = {
-    getRepository: (entity: unknown) =>
-      entity === Segment ? segmentRepository : taggingRepository,
+    getRepository: (entity: unknown) => {
+      if (entity === Segment) return segmentRepository;
+      if (entity === Tag) return tagRepository;
+      return taggingRepository;
+    },
   } as unknown as TenantDbContext;
   // Segment membership lives in ClickHouse, behind SegmentComputationService.
   const segmentComputation = { getContactIdsInSegments: jest.fn() };
@@ -33,7 +38,10 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
 
   const wizardSteps = (state: Record<string, unknown>) => ({ wizard_state: state });
 
-  beforeEach(() => segmentComputation.getContactIdsInSegments.mockReset());
+  beforeEach(() => {
+    segmentComputation.getContactIdsInSegments.mockReset();
+    tagRepository.find.mockReset().mockResolvedValue([]);
+  });
 
   describe('analyzeSegmentationStrategy', () => {
     it('targets the selected segments instead of everyone', async () => {
@@ -98,6 +106,38 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
           campaign({ steps: wizardSteps({ contact_selection: 'tags', tag_ids: ['tag-1'] }) }),
         ),
       ).rejects.toBeInstanceOf(AudienceConfigError);
+    });
+
+    it('resolves the label ids chosen in the wizard to tag names', async () => {
+      tagRepository.find.mockResolvedValue([
+        { id: 'tag-1', name: 'vip' },
+        { id: 'tag-2', name: 'lead-quente' },
+      ]);
+
+      const result = await service.analyzeSegmentationStrategy(
+        campaign({ steps: wizardSteps({ contact_selection: 'tags', tag_ids: ['tag-1', 'tag-2', 'tag-1'] }) }),
+      );
+
+      expect(result).toEqual({ type: 'tags', tags: ['vip', 'lead-quente'] });
+    });
+
+    it('refuses when a chosen label no longer exists instead of narrowing silently', async () => {
+      tagRepository.find.mockResolvedValue([{ id: 'tag-1', name: 'vip' }]);
+
+      await expect(
+        service.analyzeSegmentationStrategy(
+          campaign({ steps: wizardSteps({ contact_selection: 'tags', tag_ids: ['tag-1', 'tag-gone'] }) }),
+        ),
+      ).rejects.toBeInstanceOf(AudienceConfigError);
+    });
+
+    it('refuses excluded labels, which the tag lookup cannot honor yet', async () => {
+      await expect(
+        service.analyzeSegmentationStrategy(
+          campaign({ steps: wizardSteps({ contact_selection: 'tags', tag_ids: ['tag-1', '!tag-2'] }) }),
+        ),
+      ).rejects.toBeInstanceOf(AudienceConfigError);
+      expect(tagRepository.find).not.toHaveBeenCalled();
     });
 
     it('still resolves a tags audience when the campaign carries the tag names', async () => {

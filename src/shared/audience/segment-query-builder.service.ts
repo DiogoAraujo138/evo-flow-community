@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { Tag } from '../../modules/labels/entities/tag.entity';
 import { Campaign } from '../../modules/campaigns/entities/campaign.entity';
 import { Segment } from '../../modules/segments/entities/segment.entity';
 import { Tagging, TaggableType } from '../../modules/labels/entities/tagging.entity';
@@ -52,6 +53,10 @@ export class SegmentQueryBuilderService {
 
   private get segmentRepository(): Repository<Segment> {
     return this.db.getRepository(Segment);
+  }
+
+  private get tagRepository(): Repository<Tag> {
+    return this.db.getRepository(Tag);
   }
 
   private get taggingRepository(): Repository<Tagging> {
@@ -129,6 +134,24 @@ export class SegmentQueryBuilderService {
     // The wizard asked for a subset (tags) that none of the strategies above could resolve.
     // Sending to everyone here is irreversible and wrong, so refuse instead of defaulting.
     if (wizard.contactSelection === 'tags') {
+      // The wizard stores label ids, but the taggings lookup works on names. `tags` is the
+      // acts_as_taggable_on table the CRM labels live in, so ids resolve to names here.
+      const includeTagIds = wizard.tagIds.filter((id) => !id.startsWith('!'));
+      if (wizard.tagIds.length > includeTagIds.length) {
+        throw new AudienceConfigError(
+          `Campaign ${campaign.id} excludes tags in its audience, which is not supported yet.`,
+        );
+      }
+      if (includeTagIds.length > 0) {
+        const wanted = [...new Set(includeTagIds)];
+        const found = await this.tagRepository.find({ where: { id: In(wanted) } });
+        if (found.length !== wanted.length) {
+          throw new AudienceConfigError(
+            `Campaign ${campaign.id} targets tags that no longer exist; refusing to send to a partial or full audience.`,
+          );
+        }
+        return { type: 'tags', tags: found.map((tag) => tag.name) };
+      }
       throw new AudienceConfigError(
         `Campaign ${campaign.id} targets tags but none could be resolved; refusing to fall back to all contacts.`,
       );
