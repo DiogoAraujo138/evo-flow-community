@@ -7,10 +7,15 @@ import { TenantDbContext } from '../../evo-extension-points';
 import { ContactsClientService } from '../crm-client/contacts-client.service';
 import type { HydratedContact } from '../crm-client/types/contact';
 import { AudienceConfigError } from './errors/audience.errors';
+import { SegmentComputationService } from '../../modules/segments/services/segment-computation.service';
 
 export interface SegmentQuery {
-  type: 'segment' | 'sql' | 'tags' | 'all';
+  type: 'segment' | 'segments' | 'sql' | 'tags' | 'all';
   segmentId?: string;
+  /** type 'segments': contacts in ANY of these segments... */
+  includeSegmentIds?: string[];
+  /** ...minus contacts in ANY of these. */
+  excludeSegmentIds?: string[];
   sqlQuery?: string;
   tags?: string[];
   contactIds?: string[];
@@ -42,6 +47,7 @@ export class SegmentQueryBuilderService {
   constructor(
     private readonly db: TenantDbContext,
     private readonly contactsClient: ContactsClientService,
+    private readonly segmentComputationService: SegmentComputationService,
   ) {}
 
   private get segmentRepository(): Repository<Segment> {
@@ -68,6 +74,28 @@ export class SegmentQueryBuilderService {
       return {
         type: 'segment',
         segmentId: campaign.triggerConfig.segment_id,
+      };
+    }
+
+    // Strategy 2b: audience picked in the campaign wizard (steps.wizard_state). The wizard
+    // stores `segment_ids` / `tag_ids`, with a leading `!` meaning "exclude". Without this
+    // the audience fell through to the "all contacts" default below.
+    const wizard = this.readWizardAudience(campaign.steps);
+    if (wizard.contactSelection === 'segments') {
+      if (wizard.tagIds.length > 0) {
+        throw new AudienceConfigError(
+          `Campaign ${campaign.id} combines segments and tags in its audience, which is not supported yet. Use only segments or only tags.`,
+        );
+      }
+      if (wizard.includeSegmentIds.length === 0) {
+        throw new AudienceConfigError(
+          `Campaign ${campaign.id} targets segments but has no segment to include; refusing to fall back to all contacts.`,
+        );
+      }
+      return {
+        type: 'segments',
+        includeSegmentIds: wizard.includeSegmentIds,
+        excludeSegmentIds: wizard.excludeSegmentIds,
       };
     }
 
@@ -98,9 +126,54 @@ export class SegmentQueryBuilderService {
       };
     }
 
+    // The wizard asked for a subset (tags) that none of the strategies above could resolve.
+    // Sending to everyone here is irreversible and wrong, so refuse instead of defaulting.
+    if (wizard.contactSelection === 'tags') {
+      throw new AudienceConfigError(
+        `Campaign ${campaign.id} targets tags but none could be resolved; refusing to fall back to all contacts.`,
+      );
+    }
+
     // Default: all contacts
     return {
       type: 'all',
+    };
+  }
+
+  /**
+   * Reads the audience the campaign wizard saved. Same lookup order as the wizard itself
+   * (wizard_state, then audience_state, then steps), tolerant of missing or malformed data.
+   */
+  private readWizardAudience(steps: any): {
+    contactSelection: string | null;
+    includeSegmentIds: string[];
+    excludeSegmentIds: string[];
+    tagIds: string[];
+  } {
+    const empty = { contactSelection: null, includeSegmentIds: [], excludeSegmentIds: [], tagIds: [] };
+    if (!steps || typeof steps !== 'object') return empty;
+
+    const sources = [steps.wizard_state, steps.audience_state, steps].filter(
+      (source) => source && typeof source === 'object',
+    );
+    const firstArray = (key: string): string[] => {
+      for (const source of sources) {
+        if (Array.isArray(source[key])) {
+          return source[key].filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+        }
+      }
+      return [];
+    };
+    const selection = sources
+      .map((source) => source.contact_selection)
+      .find((value) => typeof value === 'string' && value.length > 0);
+
+    const segmentIds = firstArray('segment_ids');
+    return {
+      contactSelection: selection ?? null,
+      includeSegmentIds: segmentIds.filter((id) => !id.startsWith('!')),
+      excludeSegmentIds: segmentIds.filter((id) => id.startsWith('!')).map((id) => id.slice(1)).filter(Boolean),
+      tagIds: firstArray('tag_ids'),
     };
   }
 
@@ -119,6 +192,14 @@ export class SegmentQueryBuilderService {
 
       case 'tags':
         return this.getContactsByTags(query.tags!, limit, offset);
+
+      case 'segments':
+        return this.getContactsBySegments(
+          query.includeSegmentIds!,
+          query.excludeSegmentIds ?? [],
+          limit,
+          offset,
+        );
 
       case 'sql':
         return this.getContactsBySQL(query.sqlQuery!, limit, offset);
@@ -155,6 +236,35 @@ export class SegmentQueryBuilderService {
       contactIds: paginated,
       total,
       query: { type: 'all' },
+    };
+  }
+
+  /**
+   * Contacts that belong to ANY of the included segments and to NONE of the excluded ones,
+   * read from ClickHouse through SegmentComputationService.
+   * Blocked-flag filtering is deferred to the hydration step (consumers).
+   */
+  private async getContactsBySegments(
+    includeIds: string[],
+    excludeIds: string[],
+    limit?: number,
+    offset: number = 0,
+  ): Promise<AudienceQueryResult> {
+    const allIds = await this.segmentComputationService.getContactIdsInSegments(
+      includeIds,
+      excludeIds,
+    );
+    const paginated =
+      limit !== undefined ? allIds.slice(offset, offset + limit) : allIds;
+
+    return {
+      contactIds: paginated,
+      total: allIds.length,
+      query: {
+        type: 'segments',
+        includeSegmentIds: includeIds,
+        excludeSegmentIds: excludeIds,
+      },
     };
   }
 

@@ -10,7 +10,7 @@ describe('SegmentQueryBuilderService', () => {
       entity === Segment ? segmentRepository : taggingRepository,
   } as unknown as TenantDbContext;
   const contactsClient: any = {};
-  const service = new SegmentQueryBuilderService(db, contactsClient);
+  const service = new SegmentQueryBuilderService(db, contactsClient, {} as any);
 
   it('uses triggerConfig.segment_id as segment strategy', async () => {
     const campaign: any = {

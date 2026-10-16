@@ -99,6 +99,15 @@ export class AudienceComputationService {
       totalContacts = result.total;
     } else {
       // Use direct queries for simpler cases
+      if (query.type === 'segments' && campaign.isRunSegment) {
+        // Same as computeFromSegment: refresh the segment math before reading it.
+        for (const segmentId of [
+          ...(query.includeSegmentIds ?? []),
+          ...(query.excludeSegmentIds ?? []),
+        ]) {
+          await this.segmentComputationService.computeSegment(segmentId);
+        }
+      }
       const result = await this.segmentQueryBuilder.executeAudienceQuery(
         campaign,
         query,

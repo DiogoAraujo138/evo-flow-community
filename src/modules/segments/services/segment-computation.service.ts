@@ -286,6 +286,57 @@ export class SegmentComputationService {
     }
   }
 
+  /**
+   * Contacts that belong to ANY of `includeIds` and to NONE of `excludeIds`, read from the
+   * ClickHouse assignment table (where segment membership is written). Same source and
+   * `FINAL` semantics as getSegmentContacts, so a campaign sees what the segment screen shows.
+   */
+  async getContactIdsInSegments(
+    includeIds: string[],
+    excludeIds: string[] = [],
+  ): Promise<string[]> {
+    if (includeIds.length === 0) {
+      return [];
+    }
+
+    try {
+      const qb = this.clickhouseService.createQueryBuilder();
+      const includeParam = qb.addParameter(includeIds, 'Array(String)');
+      const exclusion =
+        excludeIds.length > 0
+          ? `AND contact_id NOT IN (
+               SELECT contact_id
+               FROM computed_property_assignments_v2 FINAL
+               WHERE type = 'segment'
+                 AND segment_value = true
+                 AND computed_property_id IN ${qb.addParameter(excludeIds, 'Array(String)')}
+             )`
+          : '';
+
+      const query = `
+        SELECT DISTINCT contact_id
+        FROM computed_property_assignments_v2 FINAL
+        WHERE type = 'segment'
+          AND segment_value = true
+          AND computed_property_id IN ${includeParam}
+          ${exclusion}
+        ORDER BY contact_id
+      `;
+
+      const result = await this.clickhouseService.query({
+        query,
+        parameters: qb.build().parameters,
+      });
+      return result.map((row: any) => row.contact_id);
+    } catch (error: any) {
+      this.logger.error(
+        `Error getting contacts of segments [${includeIds.join(', ')}] from ClickHouse: ${error.message}`,
+      );
+      // Propagate: a ClickHouse failure must not look like an empty audience.
+      throw error;
+    }
+  }
+
   async getContactSegments(contactId: string): Promise<string[]> {
     try {
       const query = `
