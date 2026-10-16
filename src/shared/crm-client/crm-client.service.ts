@@ -292,10 +292,14 @@ export class CrmClientService {
     const endpoint = `${method} ${path}`;
 
     // Pre-check: if circuit is already OPEN, fail fast with a clean exception.
-    if (
-      CrmClientService.circuitBreaker.getStats().state ===
-      CircuitBreakerState.OPEN
-    ) {
+    // Chordata: só enquanto o tempo de recuperação NÃO passou. A transição OPEN -> HALF_OPEN acontece dentro de
+    // `circuitBreaker.execute()`; sem esta ressalva ninguém chamava `execute()` de novo e, depois de qualquer queda do
+    // CRM, o Flow ficava em 503 até ser reiniciado (achado no teste de carga, 2026-10-16).
+    const stats = CrmClientService.circuitBreaker.getStats();
+    const aguardandoRecuperacao =
+      stats.state === CircuitBreakerState.OPEN &&
+      !(stats.nextRetryTime && new Date() >= stats.nextRetryTime);
+    if (aguardandoRecuperacao) {
       contactsClientMetrics.incTerminalFailure('circuit_open');
       throw new ContactsClientUnavailableException({
         correlationId: readCorrelationIdFromCls(),

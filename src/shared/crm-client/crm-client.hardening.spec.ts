@@ -182,6 +182,28 @@ describe('CrmClientService — generic-path hardening (EVO-1205)', () => {
     expect(e.totalLatencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('Chordata: depois do tempo de recuperação o breaker aberto volta a tentar e fecha (não fica preso em 503)', async () => {
+    jest.useFakeTimers();
+    fetchMock.mockResolvedValue(buildFetchResponse({ status: 500, body: {} }));
+    const first = service.get('/api/v1/contacts/x', { noCache: true }).catch((e) => e);
+    await jest.advanceTimersByTimeAsync(7000);
+    await first;
+
+    // Dentro da janela de recuperação continua rejeitando sem chamar o CRM.
+    const callsBefore = fetchMock.mock.calls.length;
+    const durante = await service.get('/api/v1/contacts/y', { noCache: true }).catch((e) => e);
+    expect((durante as ContactsClientUnavailableException).reason).toBe('circuit_open');
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+
+    // Passada a janela, o CRM voltou: a chamada tem de chegar ao fetch e ter sucesso.
+    await jest.advanceTimersByTimeAsync(120000);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(buildFetchResponse({ status: 200, body: { id: 'ok' } }));
+    const depois = await service.get('/api/v1/contacts/z', { noCache: true }).catch((e) => e);
+    expect(depois).not.toBeInstanceOf(ContactsClientUnavailableException);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
   it('AC3: circuit-open short-circuits with the same exception type', async () => {
     jest.useFakeTimers();
     fetchMock.mockResolvedValue(buildFetchResponse({ status: 500, body: {} }));
