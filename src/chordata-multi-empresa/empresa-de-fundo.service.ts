@@ -3,6 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import { DataSource } from 'typeorm';
 import { EvoExtensionPoints } from '../evo-extension-points';
 import { TENANT_DB_MANAGER_CLS_KEY } from '../evo-extension-points/tenant-db-context/tenant-db-context.types';
+import { ClickHouseEmpresa } from './clickhouse-empresa';
 import { EMPRESA_CLS_KEY, multiEmpresaLigado } from './multi-empresa.constants';
 import { EmpresaAusenteError } from './multi-empresa.runner';
 
@@ -19,8 +20,9 @@ export class EmpresaDeFundoService {
   ) {}
 
   /** Roda `trabalho` na transação da empresa, com o repositório e o CRM já na empresa certa. */
-  executarNaEmpresa<T>(empresaId: string | null | undefined, trabalho: () => Promise<T>): Promise<T> {
+  async executarNaEmpresa<T>(empresaId: string | null | undefined, trabalho: () => Promise<T>): Promise<T> {
     if (!multiEmpresaLigado()) return trabalho();
+    if (empresaId) await ClickHouseEmpresa.garantir(empresaId);
     return this.cls.run(async () => {
       const runner = EvoExtensionPoints.get('tenant_db_context');
       return runner(this.dataSource, empresaId ?? null, async manager => {

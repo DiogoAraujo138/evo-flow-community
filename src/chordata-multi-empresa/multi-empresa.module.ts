@@ -1,7 +1,10 @@
-import { Global, Module, OnModuleInit } from '@nestjs/common';
+import { Global, Logger, Module, OnApplicationBootstrap, OnModuleInit } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ClsServiceManager } from 'nestjs-cls';
 import { EvoExtensionPoints } from '../evo-extension-points';
+import { ClickHouseEmpresa } from './clickhouse-empresa';
+import { ExecucaoPorEmpresa } from './por-empresa';
 import { CrmClientModule } from '../shared/crm-client/crm-client.module';
 import { EmpresaAcessoService } from './empresa-acesso.service';
 import { EmpresaDeFundoService } from './empresa-de-fundo.service';
@@ -38,7 +41,39 @@ export function empresaAtualDoCls(): string | undefined {
   ],
   exports: [EmpresaDeFundoService],
 })
-export class MultiEmpresaModule implements OnModuleInit {
+export class MultiEmpresaModule implements OnModuleInit, OnApplicationBootstrap {
+  private readonly logger = new Logger(MultiEmpresaModule.name);
+
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly fundo: EmpresaDeFundoService,
+  ) {}
+
+  /** Depois de todos os onModuleInit (o ClickHouseService já se registrou): prepara o banco de cada empresa ativa. */
+  async onApplicationBootstrap(): Promise<void> {
+    if (!multiEmpresaLigado()) return;
+    ClickHouseEmpresa.definirBuscaDeSlug(async id => {
+      const linhas: Array<{ slug: string }> = await this.dataSource.query(
+        'SELECT slug FROM empresas WHERE id = $1 AND ativa',
+        [id],
+      );
+      return linhas[0]?.slug ?? null;
+    });
+    const empresas: Array<{ id: string; slug: string }> = await this.dataSource.query(
+      'SELECT id, slug FROM empresas WHERE ativa ORDER BY nome',
+    );
+    ExecucaoPorEmpresa.configurar(this.fundo, async () => {
+      const ativas: Array<{ id: string; slug: string }> = await this.dataSource.query(
+        'SELECT id, slug FROM empresas WHERE ativa ORDER BY nome',
+      );
+      return ativas;
+    });
+    for (const e of empresas) {
+      await ClickHouseEmpresa.garantir(e.id, e.slug);
+      this.logger.log(`Banco de eventos da empresa ${e.slug} pronto`);
+    }
+  }
+
   onModuleInit(): void {
     if (!multiEmpresaLigado()) return;
     EvoExtensionPoints.replace('tenant_db_context', multiEmpresaRunner);

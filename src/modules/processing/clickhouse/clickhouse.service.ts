@@ -8,6 +8,8 @@ import {
 import { getProcessingConfig } from '../config/processing.config';
 import { v4 as uuidv4 } from 'uuid';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
+import { ClickHouseEmpresa } from '../../../chordata-multi-empresa/clickhouse-empresa';
+import { multiEmpresaLigado } from '../../../chordata-multi-empresa/multi-empresa.constants';
 
 export interface ClickHouseQueryBuilder {
   query: string;
@@ -70,6 +72,14 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async initializeDatabase() {
+    if (multiEmpresaLigado()) {
+      // Multi-empresa: um banco por empresa, preparado por ClickHouseEmpresa. O cliente base NÃO é trocado para
+      // um banco específico (consulta sem empresa falha em vez de ler a empresa errada).
+      ClickHouseEmpresa.exigirModosCompativeis();
+      ClickHouseEmpresa.configurar(this);
+      this.logger.log('Multi-empresa: bancos do ClickHouse serão preparados por empresa');
+      return;
+    }
     try {
       this.logger.log('Initializing ClickHouse database and tables...');
 
@@ -186,7 +196,33 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Cliente já apontando para o banco da empresa (multi-empresa). Mesmas opções do cliente principal. */
+  criarClienteParaBanco(banco: string): ClickHouseClient {
+    return createClient({
+      url: `${this.config.clickhouse?.protocol || 'http'}://${this.config.clickhouse?.host || 'localhost'}:${this.config.clickhouse?.port || 8123}`,
+      database: banco,
+      username: this.config.clickhouse?.username || 'default',
+      password: this.config.clickhouse?.password || '',
+      request_timeout: 180000,
+      clickhouse_settings: {
+        date_time_input_format: 'best_effort',
+        input_format_skip_unknown_fields: 1,
+        max_bytes_ratio_before_external_group_by: 0.5,
+      } as ClickHouseSettings,
+    });
+  }
+
+  /** Cria (se faltar) o banco da empresa com as tabelas de eventos e de segmentos. Sem Kafka. */
+  async prepararBanco(banco: string): Promise<void> {
+    if (!/^[a-z0-9_]+$/.test(banco)) throw new Error(`nome de banco inválido: ${banco}`);
+    await this.command({ query: `CREATE DATABASE IF NOT EXISTS ${banco}` });
+    await this.createContactEventsTable(banco, 'contact_events');
+    await this.createSegmentTables(banco);
+  }
+
   getClient(): ClickHouseClient {
+    const daEmpresa = ClickHouseEmpresa.clienteAtual();
+    if (daEmpresa) return daEmpresa;
     if (!this.client) {
       this.logger.error(
         `❌ getClient() called but this.client is null on instance ${this.instanceId}!`,
@@ -208,7 +244,7 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug(`Executing query ${queryId}: ${params.query}`);
 
       const result = await this.getClient().query({
-        query: params.query,
+        query: ClickHouseEmpresa.reescrever(params.query),
         format: params.format || 'JSONEachRow',
         query_params: params.parameters,
         query_id: queryId,
@@ -255,7 +291,7 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
       }
 
       await this.getClient().insert({
-        table: params.table,
+        table: ClickHouseEmpresa.reescrever(params.table),
         values: params.values,
         format: params.format || 'JSONEachRow',
         clickhouse_settings: settings,
@@ -284,7 +320,7 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug(`Executing command ${queryId}: ${params.query}`);
 
       await this.getClient().command({
-        query: params.query,
+        query: ClickHouseEmpresa.reescrever(params.query),
         query_params: params.parameters,
         query_id: queryId,
         clickhouse_settings: {

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { PorEmpresa } from '../../../chordata-multi-empresa/por-empresa';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -94,6 +95,7 @@ export class SegmentJobService {
   }
 
   @Cron(CronExpression.EVERY_5_MINUTES)
+  @PorEmpresa() // multi-empresa: uma vez por empresa ativa (no-op sem MULTI_EMPRESA)
   async recomputeStaleSegments(): Promise<void> {
     // Check if this mode should run segment processing
     if (!this.isSegmentProcessingEnabled()) {
@@ -187,6 +189,7 @@ export class SegmentJobService {
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  @PorEmpresa()
   async fullRecomputeAllSegments(): Promise<void> {
     // Check if this mode should run segment processing
     if (!this.isSegmentProcessingEnabled()) {

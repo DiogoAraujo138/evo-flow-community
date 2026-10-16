@@ -12,6 +12,7 @@ import { Observable, from, lastValueFrom } from 'rxjs';
 import { IS_PUBLIC_KEY } from '../auth/decorators/public.decorator';
 import { EvoExtensionPoints } from '../evo-extension-points';
 import { TENANT_DB_MANAGER_CLS_KEY } from '../evo-extension-points/tenant-db-context/tenant-db-context.types';
+import { ClickHouseEmpresa } from './clickhouse-empresa';
 import { EmpresaAcessoService } from './empresa-acesso.service';
 import {
   EMPRESA_CLS_KEY,
@@ -54,6 +55,7 @@ export class MultiEmpresaInterceptor implements NestInterceptor {
       empresaId = await this.empresaDaRequisicao(req);
     }
 
+    if (empresaId) await ClickHouseEmpresa.garantir(empresaId); // empresa nova: prepara o banco de eventos
     const runner = EvoExtensionPoints.get('tenant_db_context');
     return from(
       runner(this.dataSource, empresaId, async manager => {
