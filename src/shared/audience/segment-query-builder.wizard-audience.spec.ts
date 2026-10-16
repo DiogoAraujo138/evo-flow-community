@@ -1,4 +1,4 @@
-import { SegmentQueryBuilderService } from './segment-query-builder.service';
+import { SegmentQueryBuilderService, SegmentQuery } from './segment-query-builder.service';
 import { Segment } from '../../modules/segments/entities/segment.entity';
 import { TenantDbContext } from '../../evo-extension-points';
 import { AudienceConfigError } from './errors/audience.errors';
@@ -169,6 +169,35 @@ describe('SegmentQueryBuilderService - audience chosen in the campaign wizard', 
       );
 
       expect(result).toMatchObject({ type: 'segments', includeSegmentIds: ['seg-a'] });
+    });
+  });
+
+  describe('fixed list of contacts', () => {
+    it('targets exactly the saved contacts, without duplicates', async () => {
+      const result = await service.analyzeSegmentationStrategy(
+        campaign({ steps: wizardSteps({ contact_selection: 'contacts', contact_ids: ['c1', 'c2', 'c1'] }) }),
+      );
+
+      expect(result).toEqual({ type: 'contacts', contactIds: ['c1', 'c2'] });
+    });
+
+    it('refuses an empty list instead of defaulting to everyone', async () => {
+      await expect(
+        service.analyzeSegmentationStrategy(
+          campaign({ steps: wizardSteps({ contact_selection: 'contacts', contact_ids: [] }) }),
+        ),
+      ).rejects.toBeInstanceOf(AudienceConfigError);
+    });
+
+    it('returns the list paginated with the full total', async () => {
+      const query: SegmentQuery = { type: 'contacts', contactIds: ['c1', 'c2', 'c3'] };
+
+      const page = await service.executeAudienceQuery(campaign(), query, 2, 1);
+      const all = await service.executeAudienceQuery(campaign(), query);
+
+      expect(page.contactIds).toEqual(['c2', 'c3']);
+      expect(page.total).toBe(3);
+      expect(all.contactIds).toEqual(['c1', 'c2', 'c3']);
     });
   });
 

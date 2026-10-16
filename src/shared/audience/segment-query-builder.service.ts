@@ -9,7 +9,7 @@ import { AudienceConfigError } from './errors/audience.errors';
 import { SegmentComputationService } from '../../modules/segments/services/segment-computation.service';
 
 export interface SegmentQuery {
-  type: 'segment' | 'segments' | 'sql' | 'tags' | 'all';
+  type: 'segment' | 'segments' | 'sql' | 'tags' | 'contacts' | 'all';
   segmentId?: string;
   /** type 'segments': contacts in ANY of these segments... */
   includeSegmentIds?: string[];
@@ -17,6 +17,7 @@ export interface SegmentQuery {
   excludeSegmentIds?: string[];
   sqlQuery?: string;
   tags?: string[];
+  /** type 'contacts': a fixed list picked by the user (snapshot of a filtered contacts view). */
   contactIds?: string[];
 }
 
@@ -94,6 +95,17 @@ export class SegmentQueryBuilderService {
       };
     }
 
+    // Strategy 2c: a fixed list of contacts, saved when the user launched the campaign from a
+    // filtered contacts view. An empty list must never turn into "everyone".
+    if (wizard.contactSelection === 'contacts') {
+      if (wizard.contactIds.length === 0) {
+        throw new AudienceConfigError(
+          `Campaign ${campaign.id} targets a list of contacts but the list is empty; refusing to fall back to all contacts.`,
+        );
+      }
+      return { type: 'contacts', contactIds: [...new Set(wizard.contactIds)] };
+    }
+
     // Strategy 3: Use existing segment (if steps contain segment reference)
     if (campaign.steps && this.hasSegmentReference(campaign.steps)) {
       const segmentId = this.extractSegmentId(campaign.steps);
@@ -162,8 +174,15 @@ export class SegmentQueryBuilderService {
     includeSegmentIds: string[];
     excludeSegmentIds: string[];
     tagIds: string[];
+    contactIds: string[];
   } {
-    const empty = { contactSelection: null, includeSegmentIds: [], excludeSegmentIds: [], tagIds: [] };
+    const empty = {
+      contactSelection: null,
+      includeSegmentIds: [],
+      excludeSegmentIds: [],
+      tagIds: [],
+      contactIds: [],
+    };
     if (!steps || typeof steps !== 'object') return empty;
 
     const sources = [steps.wizard_state, steps.audience_state, steps].filter(
@@ -187,6 +206,7 @@ export class SegmentQueryBuilderService {
       includeSegmentIds: segmentIds.filter((id) => !id.startsWith('!')),
       excludeSegmentIds: segmentIds.filter((id) => id.startsWith('!')).map((id) => id.slice(1)).filter(Boolean),
       tagIds: firstArray('tag_ids'),
+      contactIds: firstArray('contact_ids'),
     };
   }
 
@@ -205,6 +225,15 @@ export class SegmentQueryBuilderService {
 
       case 'tags':
         return this.getContactsByTags(query.tags!, limit, offset);
+
+      case 'contacts': {
+        const allIds = query.contactIds ?? [];
+        return {
+          contactIds: limit !== undefined ? allIds.slice(offset, offset + limit) : allIds,
+          total: allIds.length,
+          query,
+        };
+      }
 
       case 'segments':
         return this.getContactsBySegments(
