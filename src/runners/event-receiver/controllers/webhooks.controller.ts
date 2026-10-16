@@ -1,9 +1,13 @@
-import { Controller, Post, Req, Res } from '@nestjs/common';
+import { Controller, Optional, Post, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Public } from '../../../auth/decorators/public.decorator';
 import { StructuredLoggerService } from '../../../shared/logger/structured-logger.service';
 import { PipelineMetricsService } from '../../../shared/metrics/pipeline-metrics.service';
 import { WebhookIntakeService } from '../services/webhook-intake.service';
+import {
+  WebhookEmpresaService,
+  WebhookSemEmpresaError,
+} from '../../../chordata-multi-empresa/webhook-empresa.service';
 
 type RawRequest = Request & { rawBody?: Buffer };
 
@@ -27,6 +31,7 @@ export class WebhooksController {
     private readonly logger: StructuredLoggerService,
     private readonly intake: WebhookIntakeService,
     private readonly metrics: PipelineMetricsService,
+    @Optional() private readonly empresas?: WebhookEmpresaService,
   ) {}
 
   @Post('*splat')
@@ -45,7 +50,25 @@ export class WebhooksController {
   }
 
   private async handle(req: RawRequest, res: Response): Promise<void> {
-    const pathSegment = this.extractPathSegment(req);
+    const rawPath = this.extractPathSegment(req);
+    let pathSegment = rawPath;
+    let empresaId: string | undefined;
+    if (this.empresas) {
+      try {
+        ({ caminho: pathSegment, empresaId } =
+          await this.empresas.resolver(rawPath));
+      } catch (error) {
+        if (!(error instanceof WebhookSemEmpresaError)) throw error;
+        // Multi-empresa: webhook sem empresa válida nunca é aceito nem enfileirado.
+        this.metrics.incError('empresa_invalida');
+        this.logger.warn(
+          `Rejected webhook without a valid company (path=${rawPath}): ${error.message}`,
+          LOG_CONTEXT,
+        );
+        res.status(404).json({ error: 'empresa_invalida' });
+        return;
+      }
+    }
     const contentType = String(req.headers['content-type'] ?? '');
     const rawBody = Buffer.isBuffer(req.body) ? req.body : req.rawBody;
 
@@ -76,6 +99,7 @@ export class WebhooksController {
         rawBody,
         headers: req.headers,
         sourceIp: this.extractSourceIp(req),
+        empresaId,
       });
     } catch (error) {
       this.metrics.incError('intake_failure');

@@ -19,6 +19,7 @@ export interface WebhookIntakePayload {
   rawBody?: Buffer;
   headers: IncomingHttpHeaders;
   sourceIp: string;
+  empresaId?: string;
 }
 
 /**
@@ -45,6 +46,7 @@ export class WebhookIntakeService {
       rawPayload: payload.rawBody?.toString('utf8') ?? null,
       headers: payload.headers,
       sourceIp: payload.sourceIp,
+      empresaId: payload.empresaId,
     });
 
     // Contract validation is a drift detector, not a gate: a non-UUID inbound

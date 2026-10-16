@@ -20,6 +20,8 @@ export const eventsReceivedSchema = z
     sourceIp: z.string().min(1),
     ingestionId: z.uuidv4(),
     correlationId: z.uuidv4(),
+    // Multi-empresa (Chordata): empresa dona do webhook, definida pelo caminho da URL. Ausente = Evo comunitário.
+    empresaId: z.uuid().optional(),
   })
   .strict();
 

@@ -9,6 +9,7 @@ import { usarTransacaoDaEmpresaNosRepositorios } from './temporal';
 import { CrmClientModule } from '../shared/crm-client/crm-client.module';
 import { EmpresaAcessoService } from './empresa-acesso.service';
 import { EmpresaDeFundoService } from './empresa-de-fundo.service';
+import { WebhookEmpresaService } from './webhook-empresa.service';
 import { EMPRESA_CLS_KEY, multiEmpresaLigado } from './multi-empresa.constants';
 import { MultiEmpresaInterceptor } from './multi-empresa.interceptor';
 import { multiEmpresaRunner } from './multi-empresa.runner';
@@ -33,6 +34,7 @@ export function empresaAtualDoCls(): string | undefined {
   imports: [CrmClientModule],
   providers: [
     EmpresaDeFundoService,
+    WebhookEmpresaService,
     ...(multiEmpresaLigado()
       ? [
           EmpresaAcessoService,
@@ -40,7 +42,7 @@ export function empresaAtualDoCls(): string | undefined {
         ]
       : []),
   ],
-  exports: [EmpresaDeFundoService],
+  exports: [EmpresaDeFundoService, WebhookEmpresaService],
 })
 export class MultiEmpresaModule implements OnModuleInit, OnApplicationBootstrap {
   private readonly logger = new Logger(MultiEmpresaModule.name);

@@ -4,6 +4,8 @@ import { randomUUID } from 'crypto';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { getProcessingConfig } from 'src/modules/processing/config/processing.config';
 import { getEventsReceivedTopic } from 'src/shared/broker/contracts/events-received.contract';
+import { ClickHouseEmpresa } from 'src/chordata-multi-empresa/clickhouse-empresa';
+import { multiEmpresaLigado } from 'src/chordata-multi-empresa/multi-empresa.constants';
 import { EnrichedEvent } from './enricher.service';
 import { DlqPublisherService } from './dlq-publisher.service';
 import { EventProcessMetrics } from '../metrics/event-process-metrics';
@@ -129,12 +131,35 @@ export class ClickHouseWriterService implements OnModuleDestroy {
     return this.flushChain;
   }
 
+  /**
+   * Multi-empresa: cada empresa tem o seu banco, então o lote é dividido por empresa e cada grupo é gravado (e
+   * mandado ao DLQ, se esgotar as tentativas) sozinho. Desligado, é um grupo só: o lote inteiro, como no upstream.
+   */
   private async flushBatch(batch: BufferedEvent[]): Promise<void> {
+    const grupos = new Map<string | undefined, BufferedEvent[]>();
+    for (const entry of batch) {
+      const chave = entry.source.empresaId;
+      const grupo = grupos.get(chave);
+      if (grupo) grupo.push(entry);
+      else grupos.set(chave, [entry]);
+    }
+    for (const [empresaId, grupo] of grupos) {
+      await this.flushGroup(grupo, empresaId);
+    }
+  }
+
+  private async flushGroup(
+    batch: BufferedEvent[],
+    empresaId: string | undefined,
+  ): Promise<void> {
     const startedAt = Date.now();
 
     for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
       try {
-        await this.insertRows(batch.map((entry) => entry.row));
+        await this.insertRows(
+          batch.map((entry) => entry.row),
+          empresaId,
+        );
         this.metrics.clickhouseInsertLatencyMs.observe(Date.now() - startedAt);
         this.metrics.clickhouseBatchSize.observe(batch.length);
         return;
@@ -162,8 +187,18 @@ export class ClickHouseWriterService implements OnModuleDestroy {
     }
   }
 
-  private async insertRows(rows: ContactEventRow[]): Promise<void> {
-    await this.getClient().insert({
+  private async insertRows(
+    rows: ContactEventRow[],
+    empresaId?: string,
+  ): Promise<void> {
+    // Com empresa: o cliente do banco dela. Sem empresa com multi-empresa ligado, nunca cai no banco padrão.
+    const doBanco = empresaId
+      ? await ClickHouseEmpresa.clientePara(empresaId)
+      : null;
+    if (empresaId && multiEmpresaLigado() && !doBanco) {
+      throw new Error(`sem cliente de ClickHouse para a empresa ${empresaId}`);
+    }
+    await (doBanco ?? this.getClient()).insert({
       table: this.table,
       values: rows,
       format: 'JSONEachRow',

@@ -12,6 +12,7 @@ export interface NormalizerInput {
   rawPayload: unknown;
   headers: IncomingHttpHeaders;
   sourceIp: string;
+  empresaId?: string;
 }
 
 /**
@@ -50,6 +51,7 @@ export class PayloadNormalizerService {
       sourceIp: input.sourceIp,
       ingestionId: randomUUID(),
       correlationId: readCorrelationIdFromCls() ?? randomUUID(),
+      ...(input.empresaId ? { empresaId: input.empresaId } : {}),
     };
   }
 

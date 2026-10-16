@@ -14,6 +14,14 @@ export type BuscarSlug = (empresaId: string) => Promise<string | null>;
 
 export const SLUG_PADRAO = 'padrao';
 
+/** Empresa inexistente ou inativa: erro permanente (quem consome fila deve descartar, não reentregar). */
+export class EmpresaDesconhecidaError extends Error {
+  constructor(empresaId: string) {
+    super(`empresa ${empresaId} sem slug: não dá para escolher o banco de eventos`);
+    this.name = 'EmpresaDesconhecidaError';
+  }
+}
+
 /** `padrao` mantém o banco que já existe (com os eventos atuais); as demais ganham `evo_campaign_<slug>`. */
 export function nomeDoBanco(slug: string): string {
   if (slug === SLUG_PADRAO) return process.env.CLICKHOUSE_DATABASE || 'evo_campaign';
@@ -74,7 +82,7 @@ export class ClickHouseEmpresa {
     if (!preparo) {
       preparo = (async () => {
         const slug = slugConhecido ?? (await this.buscarSlug?.(empresaId));
-        if (!slug) throw new Error(`empresa ${empresaId} sem slug: não dá para escolher o banco de eventos`);
+        if (!slug) throw new EmpresaDesconhecidaError(empresaId);
         const banco = nomeDoBanco(slug);
         await this.semEscolhaPorEmpresa(() => this.servico!.prepararBanco(banco));
         this.clientes.set(empresaId, { banco, cliente: this.servico!.criarClienteParaBanco(banco) });
@@ -108,6 +116,16 @@ export class ClickHouseEmpresa {
       throw new Error(`banco de eventos da empresa ${empresa} não está preparado (garantir() não rodou)`);
     }
     return entrada;
+  }
+
+  /**
+   * Cliente do banco de uma empresa pelo id (para quem grava fora de requisição/CLS, como o escritor em lote dos
+   * webhooks). Prepara o banco se for a primeira vez. Desligado: null (o chamador usa o cliente de sempre).
+   */
+  static async clientePara(empresaId: string): Promise<ClickHouseClient | null> {
+    if (!multiEmpresaLigado()) return null;
+    await this.garantir(empresaId);
+    return this.clientes.get(empresaId)?.cliente ?? null;
   }
 
   /** Cliente da empresa corrente, ou null (desligado / sem empresa: usa o cliente base, sem dados). */

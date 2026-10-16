@@ -5,6 +5,11 @@ import {
   isEventsReceivedContract,
 } from 'src/shared/broker/contracts/events-received.contract';
 import { TerminalError } from 'src/shared/errors/terminal-error';
+import {
+  ClickHouseEmpresa,
+  EmpresaDesconhecidaError,
+} from 'src/chordata-multi-empresa/clickhouse-empresa';
+import { multiEmpresaLigado } from 'src/chordata-multi-empresa/multi-empresa.constants';
 import { IdempotencyService } from 'src/shared/idempotency/idempotency.service';
 import { SignatureValidatorRegistry } from './signature-validator.registry';
 import { EnricherService } from './enricher.service';
@@ -47,6 +52,8 @@ export class EventProcessService {
     }
     const valid: EventsReceivedContract = envelope;
 
+    await this.exigirEmpresa(valid);
+
     if (!(await this.hasValidSignature(valid))) return;
 
     if (await this.isDuplicate(valid)) return;
@@ -63,6 +70,28 @@ export class EventProcessService {
         JSON.stringify(valid.rawPayload ?? null),
       ),
     });
+  }
+
+  /**
+   * Multi-empresa: o envelope precisa trazer uma empresa ativa (o receptor a coloca a partir do caminho). Sem ela,
+   * ou com empresa desconhecida/inativa, o evento é descartado de vez (erro permanente), nunca gravado "sem dono".
+   * Desligado, só rejeita a empresa que não deveria existir.
+   */
+  private async exigirEmpresa(valid: EventsReceivedContract): Promise<void> {
+    if (!multiEmpresaLigado()) return;
+    if (!valid.empresaId) {
+      throw new InvalidEnvelopeError(
+        'multi-empresa ligado: envelope events.received sem empresaId',
+      );
+    }
+    try {
+      await ClickHouseEmpresa.garantir(valid.empresaId);
+    } catch (error) {
+      if (error instanceof EmpresaDesconhecidaError) {
+        throw new InvalidEnvelopeError(error.message);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -128,7 +157,13 @@ export class EventProcessService {
    * header. A duplicate is expected behaviour, so it logs at info, not warn.
    */
   private async isDuplicate(valid: EventsReceivedContract): Promise<boolean> {
-    const hash = this.idempotency.computeHash(this.rawPayloadString(valid));
+    // Mesmo corpo em empresas diferentes não é duplicata: a empresa entra no hash.
+    const hash = this.idempotency.computeHash(
+      valid.empresaId
+        ? `${valid.empresaId}
+${this.rawPayloadString(valid)}`
+        : this.rawPayloadString(valid),
+    );
     if (await this.idempotency.checkAndMark(hash)) return false;
 
     this.logger.log('event-process.duplicate', {
