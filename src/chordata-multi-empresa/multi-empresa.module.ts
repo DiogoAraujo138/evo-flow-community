@@ -5,6 +5,7 @@ import { ClsServiceManager } from 'nestjs-cls';
 import { EvoExtensionPoints } from '../evo-extension-points';
 import { ClickHouseEmpresa } from './clickhouse-empresa';
 import { ExecucaoPorEmpresa } from './por-empresa';
+import { FonteDeEmpresas } from './fonte-de-empresas';
 import { usarTransacaoDaEmpresaNosRepositorios } from './temporal';
 import { CrmClientModule } from '../shared/crm-client/crm-client.module';
 import { EmpresaAcessoService } from './empresa-acesso.service';
@@ -56,18 +57,19 @@ export class MultiEmpresaModule implements OnModuleInit, OnApplicationBootstrap 
   async onApplicationBootstrap(): Promise<void> {
     if (!multiEmpresaLigado()) return;
     usarTransacaoDaEmpresaNosRepositorios();
+    FonteDeEmpresas.configurar(this.dataSource);
     ClickHouseEmpresa.definirBuscaDeSlug(async id => {
-      const linhas: Array<{ slug: string }> = await this.dataSource.query(
+      const linhas = await FonteDeEmpresas.consultar<{ slug: string }>(
         'SELECT slug FROM empresas WHERE id = $1 AND ativa',
         [id],
       );
       return linhas[0]?.slug ?? null;
     });
-    const empresas: Array<{ id: string; slug: string }> = await this.dataSource.query(
+    const empresas = await FonteDeEmpresas.consultar<{ id: string; slug: string }>(
       'SELECT id, slug FROM empresas WHERE ativa ORDER BY nome',
     );
     ExecucaoPorEmpresa.configurar(this.fundo, async () => {
-      const ativas: Array<{ id: string; slug: string }> = await this.dataSource.query(
+      const ativas = await FonteDeEmpresas.consultar<{ id: string; slug: string }>(
         'SELECT id, slug FROM empresas WHERE ativa ORDER BY nome',
       );
       return ativas;

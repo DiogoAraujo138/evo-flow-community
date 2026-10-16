@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { FonteDeEmpresas } from './fonte-de-empresas';
 import { multiEmpresaLigado } from './multi-empresa.constants';
 
 /** Prefixo do caminho que diz de quem é o webhook: `/webhooks/empresa/<slug>/<plataforma>`. */
@@ -30,8 +30,6 @@ export interface WebhookResolvido {
  */
 @Injectable()
 export class WebhookEmpresaService {
-  constructor(private readonly dataSource: DataSource) {}
-
   async resolver(caminho: string): Promise<WebhookResolvido> {
     if (!multiEmpresaLigado()) return { caminho };
     const partes = caminho.split('/');
@@ -40,7 +38,7 @@ export class WebhookEmpresaService {
     }
     const slug = partes[1].toLowerCase();
     if (!SLUG_RE.test(slug)) throw new WebhookSemEmpresaError('desconhecida');
-    const linhas: Array<{ id: string }> = await this.dataSource.query(
+    const linhas = await FonteDeEmpresas.consultar<{ id: string }>(
       'SELECT id FROM empresas WHERE slug = $1 AND ativa',
       [slug],
     );

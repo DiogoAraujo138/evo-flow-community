@@ -4,6 +4,7 @@ jest.mock('@clickhouse/client', () => ({
 }));
 
 import { ClickHouseEmpresa } from './clickhouse-empresa';
+import { FonteDeEmpresas } from './fonte-de-empresas';
 import { WebhookEmpresaService, WebhookSemEmpresaError } from './webhook-empresa.service';
 import { EventProcessService, InvalidEnvelopeError } from '../runners/event-process/services/event-process.service';
 import { ClickHouseWriterService } from '../runners/event-process/services/clickhouse-writer.service';
@@ -15,9 +16,11 @@ const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function dataSource(empresas: Record<string, string>) {
-  return {
+  const ds = {
     query: jest.fn(async (_sql: string, [slug]: [string]) => (empresas[slug] ? [{ id: empresas[slug] }] : [])),
   };
+  FonteDeEmpresas.configurar(ds as never);
+  return ds;
 }
 
 describe('webhook por empresa (caminho /webhooks/empresa/<slug>/...)', () => {
@@ -30,14 +33,15 @@ describe('webhook por empresa (caminho /webhooks/empresa/<slug>/...)', () => {
     it('desligado devolve o caminho como veio, sem consultar o banco', async () => {
       delete process.env.MULTI_EMPRESA;
       const ds = dataSource({});
-      const r = await new WebhookEmpresaService(ds as never).resolver('evolution-api/x');
+      const r = await new WebhookEmpresaService().resolver('evolution-api/x');
       expect(r).toEqual({ caminho: 'evolution-api/x' });
       expect(ds.query).not.toHaveBeenCalled();
     });
 
     it('ligado tira o prefixo e acha a empresa pelo slug', async () => {
       process.env.MULTI_EMPRESA = 'on';
-      const r = await new WebhookEmpresaService(dataSource({ vetconnection: A }) as never).resolver(
+      dataSource({ vetconnection: A });
+      const r = await new WebhookEmpresaService().resolver(
         'empresa/VetConnection/evolution-api/inst',
       );
       expect(r).toEqual({ caminho: 'evolution-api/inst', empresaId: A });
@@ -47,7 +51,7 @@ describe('webhook por empresa (caminho /webhooks/empresa/<slug>/...)', () => {
       'ligado recusa %p (sem empresa válida)',
       async caminho => {
         process.env.MULTI_EMPRESA = 'on';
-        await expect(new WebhookEmpresaService(dataSource({ a: A }) as never).resolver(caminho)).rejects.toBeInstanceOf(
+        await expect((dataSource({ a: A }), new WebhookEmpresaService()).resolver(caminho)).rejects.toBeInstanceOf(
           WebhookSemEmpresaError,
         );
       },
@@ -85,7 +89,7 @@ describe('webhook por empresa (caminho /webhooks/empresa/<slug>/...)', () => {
 
     it('empresa conhecida: manda o caminho sem prefixo e a empresa ao intake', async () => {
       process.env.MULTI_EMPRESA = 'on';
-      const { ctrl, intake, res, req } = chamar(new WebhookEmpresaService(dataSource({ a: A }) as never));
+      const { ctrl, intake, res, req } = chamar((dataSource({ a: A }), new WebhookEmpresaService()));
       await ctrl.receive(req as never, res as never);
       expect(intake.intake).toHaveBeenCalledWith(expect.objectContaining({ pathSegment: 'evolution-api', empresaId: A }));
       expect(res.status).toHaveBeenCalledWith(200);
@@ -93,7 +97,7 @@ describe('webhook por empresa (caminho /webhooks/empresa/<slug>/...)', () => {
 
     it('empresa desconhecida: 404 e nada é publicado', async () => {
       process.env.MULTI_EMPRESA = 'on';
-      const { ctrl, intake, res, req } = chamar(new WebhookEmpresaService(dataSource({ b: B }) as never));
+      const { ctrl, intake, res, req } = chamar((dataSource({ b: B }), new WebhookEmpresaService()));
       await ctrl.receive(req as never, res as never);
       expect(res.status).toHaveBeenCalledWith(404);
       expect(intake.intake).not.toHaveBeenCalled();
