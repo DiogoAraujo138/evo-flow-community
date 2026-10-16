@@ -566,6 +566,12 @@ export class CrmClientService {
       headers['X-Correlation-Id'] = correlationId;
     }
 
+    // Multi-empresa: o CRM só atende com a empresa dita (e confere o vínculo do usuário).
+    const empresaId = this.readEmpresaId();
+    if (empresaId) {
+      headers['X-Evo-Tenant-Id'] = empresaId;
+    }
+
     return headers;
   }
 
@@ -573,6 +579,15 @@ export class CrmClientService {
     if (!this.cls) return undefined;
     try {
       return this.cls.get<string>('transactionId');
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readEmpresaId(): string | undefined {
+    if (!this.cls) return undefined;
+    try {
+      return this.cls.get<string>('empresaId');
     } catch {
       return undefined;
     }
@@ -597,8 +612,10 @@ export class CrmClientService {
       .update(tokenSource)
       .digest('hex')
       .slice(0, 16);
+    // A empresa entra na chave: sem isso o contato lido para a empresa A seria servido do cache para a B.
+    const empresa = this.readEmpresaId() ?? '';
     return createHash('sha256')
-      .update(`${method}:${path}:${tokenHash}`)
+      .update(`${method}:${path}:${tokenHash}:${empresa}`)
       .digest('hex');
   }
 

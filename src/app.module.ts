@@ -10,6 +10,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ClsMiddleware, ClsModule } from 'nestjs-cls';
 import { AppDataSource } from './database/ormconfig';
+import { MultiEmpresaModule } from './chordata-multi-empresa/multi-empresa.module';
 import { AppController } from './app.controller';
 import { MetricsController } from './controllers/metrics.controller';
 import { RequestContextMiddleware } from './middlewares/request-context.middleware';
@@ -86,6 +87,7 @@ export class AppModule {
       // DB-context seam (ADR14, story 10.1b). Global no-op provider in community;
       // the enterprise overlay contributes the per-request RLS transaction.
       TenantDbContextModule,
+      MultiEmpresaModule,
       CorrelationModule,
       LoggerModule,
       PipelineMetricsModule,
