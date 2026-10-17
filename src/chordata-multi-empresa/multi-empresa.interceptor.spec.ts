@@ -19,7 +19,10 @@ function montar(opcoes: { publica?: boolean; resolvida?: string | null } = {}) {
   const armazenado: Record<string, unknown> = {};
   const cls = { set: (k: string, v: unknown) => (armazenado[k] = v) };
   const reflector = { getAllAndOverride: jest.fn().mockReturnValue(!!opcoes.publica) } as unknown as Reflector;
-  const acesso = { validarUsuario: jest.fn().mockResolvedValue(undefined) };
+  const acesso = {
+    validarUsuario: jest.fn().mockResolvedValue(undefined),
+    empresaUnica: jest.fn().mockResolvedValue(null),
+  };
   const interceptor = new MultiEmpresaInterceptor(dataSource as never, cls as never, reflector, acesso as never);
   return { interceptor, dataSource, manager, armazenado, acesso };
 }
@@ -49,6 +52,27 @@ describe('MultiEmpresaInterceptor', () => {
     expect(manager.query).toHaveBeenCalledWith('SELECT set_config($1, $2, true)', ['app.empresa_id', A]);
     expect(armazenado[TENANT_DB_MANAGER_CLS_KEY]).toBe(manager);
     expect(armazenado[EMPRESA_CLS_KEY]).toBe(A);
+  });
+
+  it('sem cabeçalho, usuário com UMA só empresa: usa essa empresa (como o CRM e o Core) e valida o vínculo', async () => {
+    const { interceptor, manager, acesso } = montar();
+    acesso.empresaUnica.mockResolvedValue(A);
+    const req = { headers: { authorization: 'Bearer tok' } };
+
+    await lastValueFrom(await interceptor.intercept(contexto(req), handler()));
+
+    expect(acesso.empresaUnica).toHaveBeenCalledWith('tok');
+    expect(acesso.validarUsuario).toHaveBeenCalledWith('tok', A);
+    expect(manager.query).toHaveBeenCalledWith('SELECT set_config($1, $2, true)', ['app.empresa_id', A]);
+  });
+
+  it('sem cabeçalho e com chave de integração: continua 400 (serviço precisa dizer a empresa)', async () => {
+    const { interceptor, acesso } = montar();
+    acesso.empresaUnica.mockResolvedValue(A);
+    const req = { headers: { 'x-integration-api-key': 'k' } };
+
+    await expect(interceptor.intercept(contexto(req), handler())).rejects.toBeInstanceOf(BadRequestException);
+    expect(acesso.empresaUnica).not.toHaveBeenCalled();
   });
 
   it('sem cabeçalho de empresa: 400, e o handler nem roda', async () => {

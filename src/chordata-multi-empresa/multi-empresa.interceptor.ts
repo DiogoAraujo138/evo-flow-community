@@ -70,9 +70,19 @@ export class MultiEmpresaInterceptor implements NestInterceptor {
     headers: Record<string, string | string[] | undefined>;
   }): Promise<string> {
     const bruto = req.headers[EMPRESA_HEADER];
-    const empresaId = (Array.isArray(bruto) ? bruto[0] : bruto)?.trim();
+    let empresaId = (Array.isArray(bruto) ? bruto[0] : bruto)?.trim();
     if (!empresaId) {
-      throw new BadRequestException('Informe a empresa no cabeçalho X-Evo-Tenant-Id');
+      // Sem cabeçalho: vale a única empresa do usuário (igual ao CRM e ao Core); com várias ou sem Bearer, é preciso informar.
+      const autorizacao = req.headers.authorization;
+      const bearer =
+        typeof autorizacao === 'string' && autorizacao.startsWith('Bearer ')
+          ? autorizacao.slice('Bearer '.length).trim()
+          : undefined;
+      const unica = bearer && !req.headers['x-integration-api-key'] ? await this.acesso.empresaUnica(bearer) : null;
+      if (!unica) {
+        throw new BadRequestException('Informe a empresa no cabeçalho X-Evo-Tenant-Id');
+      }
+      empresaId = unica;
     }
     if (!UUID_RE.test(empresaId)) {
       throw new BadRequestException('Empresa inválida');
