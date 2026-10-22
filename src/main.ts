@@ -285,7 +285,9 @@ async function bootstrap() {
     app.enableCors({
       origin: true,
       credentials: true,
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      // X-Evo-Tenant-Id is the active company. Without it in the preflight
+      // answer, the browser never sends Flow calls (campaigns, segments).
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Evo-Tenant-Id'],
     });
     // NOTE: app.listen() for HTTP modes happens in the unified listener block
     // below (shared with the pipeline worker modes that serve health probes).
